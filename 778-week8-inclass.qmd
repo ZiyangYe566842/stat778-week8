@@ -13,3 +13,132 @@ format:
 ---
 
 ### Activity 1
+```{r}
+
+library(truncnorm)
+library(parallel)
+
+# task1
+generate_left_truncated_normal <- function(n, mu, sigma, theta) {
+  samples <- numeric(0)
+  while (length(samples) < n) {
+    candidate <- rnorm(n - length(samples), mean = mu, sd = sigma)
+    accepted <- candidate[candidate >= theta]
+    samples <- c(samples, accepted)
+  }
+  return(samples)
+}
+
+# task2
+estimate_theta <- function(sample) {
+  return(min(sample))
+}
+
+# Pivot Bootstrap 
+pivot_bootstrap_ci <- function(sample, B = 1000, conf_level = 0.90) {
+  theta_hat <- min(sample)
+  bootstrap_min <- replicate(B, min(sample(sample, replace = TRUE)))
+  pivot_samples <- bootstrap_min - theta_hat
+  alpha <- (1 - conf_level) / 2
+  q_lower <- quantile(pivot_samples, 1 - alpha)
+  q_upper <- quantile(pivot_samples, alpha)
+  
+  ci_lower <- theta_hat - q_lower
+  ci_upper <- theta_hat - q_upper
+  
+  return(c(ci_lower, ci_upper))
+}
+
+compute_coverage_parallel <- function(N_values, n_values, mu = 0, sigma = 2, theta = -1, B = 500, conf_level = 0.90) {
+  results <- list()
+  
+  cores <- detectCores() - 1
+  cl <- makeCluster(cores)
+  
+  # close connection if mistake
+  on.exit(stopCluster(cl), add = TRUE)
+  
+
+  clusterExport(cl, c("generate_left_truncated_normal", "pivot_bootstrap_ci"))
+  
+  for (N in N_values) {
+    coverage_prob <- numeric(length(n_values))
+    names(coverage_prob) <- paste0("n=", n_values)
+    
+    for (i in seq_along(n_values)) {
+      n <- n_values[i]
+
+      coverages <- parLapply(cl, 1:N, function(j, n, mu, sigma, theta, B, conf_level) {
+        set.seed(j)
+        sample <- generate_left_truncated_normal(n, mu, sigma, theta)
+        CI <- pivot_bootstrap_ci(sample, B, conf_level)
+        as.integer((CI[1] <= theta) && (theta <= CI[2]))
+      }, n=n, mu=mu, sigma=sigma, theta=theta, B=B, conf_level=conf_level)
+
+      coverage_prob[i] <- mean(unlist(coverages))
+    }
+    results[[paste0("N=", N)]] <- coverage_prob
+  }
+  
+  return(results)
+}
+
+# plot
+plot_coverage_results <- function(coverage_results, n_values) {
+  plot(NULL, xlim = range(n_values), ylim = c(0,1), 
+       xlab = "Sample size (n)", ylab = "Coverage Probability", type = "n",
+       main = "Coverage Probability for different N")
+  colors <- rainbow(length(coverage_results))
+  legend_labels <- names(coverage_results)
+
+  for (i in seq_along(coverage_results)) {
+    lines(n_values, coverage_results[[i]], type = "o", col = colors[i], pch = 16)
+  }
+
+  legend("bottomright", legend = legend_labels, col = colors, lty = 1, pch = 16)
+}
+
+# close
+closeAllConnections()
+
+# small sample test
+#N_values_test <- c(50, 100)
+#n_values_test <- c(25, 50)
+#coverage_results_parallel_test <- compute_coverage_parallel(N_values_test, n_values_test, B = 100)
+
+#plot_coverage_results(coverage_results_parallel_test, n_values_test)
+
+
+# full test
+N_values_full <- c(100, 1000, 5000, 10000)
+n_values_full <- c(25, 50, 100, 500)
+coverage_results_parallel_full <- compute_coverage_parallel(N_values_full, n_values_full, B = 500)
+plot_coverage_results(coverage_results_parallel_full, n_values_full)
+
+
+```
+
+## Activity 2
+
+
+Define the indicator function:
+$I\left(\theta \in [\hat{\theta}^{\,\text{lo}},\,\hat{\theta}^{\,\text{up}}]\right) = \begin{cases}1, & \text{if}\quad \theta \in[\hat{\theta}^{\,\text{lo}},\,\hat{\theta}^{\,\text{up}}], \\[6pt]0, & \text{otherwise}.\end{cases}$
+
+The Monte Carlo simulation approximates the expectation:
+$\mathbb{E}\left[I\left(\theta \in [\hat{\theta}^{\,\text{lo}},\,\hat{\theta}^{\,\text{up}}]\right)\right]$
+which can equivalently be expressed as the coverage probability:
+$P\left(\hat{\theta}^{\,\text{lo}} \leq \theta \leq \hat{\theta}^{\,\text{up}}\right)$
+
+Explicitly, this probability can be written as an integral:
+$P\left(\hat{\theta}^{\,\text{lo}} \leq \theta \leq \hat{\theta}^{\,\text{up}}\right) = \int_{\mathbb{R}^n} I\left(\hat{\theta}^{\,\text{lo}}(\mathbf{x}) \leq \theta \leq \hat{\theta}^{\,\text{up}}(\mathbf{x})\right)\prod_{i=1}^{n}f(x_i;\mu,\sigma,\theta)\,dx_1 dx_2 \dots dx_n$
+
+where:
+
+- $\mathbf{x} = (x_1,x_2,\dots,x_n)$ is a random sample drawn from the left-truncated normal distribution with PDF $f(x;\mu,\sigma,\theta)$.
+- $\hat{\theta}^{\,\text{lo}}(\mathbf{x})$ and $\hat{\theta}^{\,\text{up}}(\mathbf{x})$ are the lower and upper endpoints of the bootstrap confidence interval computed from sample $\mathbf{x}$.
+
+the Monte Carlo estimate of the coverage probability is computed as the empirical mean of the indicator function over $N$ simulation replications:
+$\frac{1}{N}\sum_{j=1}^{N} I\left(\hat{\theta}^{\,\text{lo}}(\mathbf{x}^{(j)}) \leq \theta \leq \hat{\theta}^{\,\text{up}}(\mathbf{x}^{(j)})\right)$
+
+where $\mathbf{x}^{(j)}$, for $j = 1, 2, \dots, N$, are independent random samples drawn from the given left-truncated normal distribution.
+
